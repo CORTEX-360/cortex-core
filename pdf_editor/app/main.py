@@ -1,4 +1,4 @@
-# app/main.py (Versão 2.0 - Deep Extraction)
+# app/main.py (Versão 4.0 - True Redaction / Supressão Real)
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,9 +9,8 @@ import uuid
 import json
 import io
 
-app = FastAPI(title="CORTEX 360 PDF Engine", version="2.0")
+app = FastAPI(title="CORTEX 360 PDF Engine", version="4.0")
 
-# Permite conexões de qualquer origem (CORS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,14 +22,38 @@ app.add_middleware(
 UPLOAD_DIR = "/tmp/cortex_uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-@app.get("/")
-def read_root():
-    return {"status": "online", "system": "Cortex PDF Engine v2.0 (Deep Edit)"}
+def map_font_to_web(pdf_font_name):
+    """Mapeia fontes do PDF para Web."""
+    name = pdf_font_name.lower()
+    if 'wingdings' in name or 'symbol' in name: return 'Segoe UI Symbol'
+    if 'times' in name or 'roman' in name or 'serif' in name: return 'Times New Roman'
+    elif 'courier' in name or 'mono' in name: return 'Courier New'
+    elif 'arial' in name or 'helv' in name or 'sans' in name: return 'Arial'
+    else: return 'Arial'
+
+def hex_to_rgb(hex_color):
+    """Converte HEX para RGB (0-1 float) para PyMuPDF."""
+    if not hex_color or hex_color == 'transparent': return None
+    hex_color = hex_color.lstrip('#')
+    if len(hex_color) != 6: return None
+    return tuple(int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+
+def get_smart_bg_color(page, bbox):
+    """Detecta a cor do papel na área."""
+    try:
+        rect = fitz.Rect(bbox[0]-2, bbox[1]-2, bbox[2]+2, bbox[3]+2)
+        pix = page.get_pixmap(clip=rect, matrix=fitz.Matrix(0.5, 0.5))
+        r, g, b = pix.pixel(0, 0)
+        # Evita preto absoluto (provavelmente pegou borda)
+        if r < 30 and g < 30 and b < 30: return '#ffffff'
+        return '#{:02x}{:02x}{:02x}'.format(r, g, b)
+    except:
+        return '#ffffff'
 
 @app.post("/analyze")
 async def analyze_pdf(file: UploadFile = File(...)):
     if not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Arquivo deve ser um PDF.")
+        raise HTTPException(status_code=400, detail="Arquivo inválido.")
 
     file_id = str(uuid.uuid4())
     file_path = os.path.join(UPLOAD_DIR, f"{file_id}.pdf")
@@ -43,59 +66,49 @@ async def analyze_pdf(file: UploadFile = File(...)):
         pages_data = []
 
         for page_num, page in enumerate(doc):
-            # Extrai estrutura detalhada (Dicionário)
             page_dict = page.get_text("dict")
-            width = page_dict["width"]
-            height = page_dict["height"]
-            
             extracted_lines = []
 
-            # Navega na hierarquia: Bloco -> Linha -> Span (Pedaço de texto com mesma fonte)
             for block in page_dict.get("blocks", []):
-                if block.get("type") == 0:  # Tipo 0 é texto
+                if block.get("type") == 0:
                     for line in block.get("lines", []):
                         for span in line.get("spans", []):
-                            # Filtra textos muito pequenos ou invisíveis para não poluir a tela
-                            if span['size'] > 2 and span['text'].strip()::
+                            if span['size'] > 2 and span['text'].strip():
+                                
+                                detected_bg = get_smart_bg_color(page, span['bbox'])
+                                web_font = map_font_to_web(span['font'])
+
                                 extracted_lines.append({
                                     "text": span['text'],
                                     "x": span['bbox'][0],
-                                    "y": span['bbox'][1], # Topo da linha
+                                    "y": span['bbox'][1],
                                     "width": span['bbox'][2] - span['bbox'][0],
                                     "height": span['bbox'][3] - span['bbox'][1],
                                     "size": span['size'],
-                                    "font": span['font'],
-                                    "color": span['color'] # Int (sRGB)
+                                    "fontFamily": web_font,
+                                    "fontWeight": 'bold' if 'bold' in span['font'].lower() else 'normal',
+                                    "detectedBg": detected_bg
                                 })
             
             pages_data.append({
                 "page_number": page_num + 1,
-                "width": width,
-                "height": height,
+                "width": page_dict["width"],
+                "height": page_dict["height"],
                 "text_objects": extracted_lines
             })
 
         doc.close()
         os.remove(file_path)
-
-        return {
-            "status": "success",
-            "total_pages": len(pages_data),
-            "pages": pages_data
-        }
+        return {"status": "success", "pages": pages_data}
 
     except Exception as e:
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        print(f"Erro: {e}")
+        if os.path.exists(file_path): os.remove(file_path)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/sign")
 async def sign_pdf(file: UploadFile = File(...), modifications: str = Form(...)):
     """
-    Versão Avançada:
-    1. Desenha um retângulo branco sobre o texto antigo (Redact/Whiteout).
-    2. Escreve o novo texto por cima.
+    Versão 4.0: Usa REDACTION para remover o texto original fisicamente.
     """
     try:
         mods = json.loads(modifications)
@@ -103,48 +116,57 @@ async def sign_pdf(file: UploadFile = File(...), modifications: str = Form(...))
         doc = fitz.open(stream=pdf_stream, filetype="pdf")
 
         for page_mod in mods:
-            page_idx = page_mod['pageIndex']
-            if page_idx < len(doc):
-                page = doc[page_idx]
+            if page_mod['pageIndex'] < len(doc):
+                page = doc[page_mod['pageIndex']]
                 
+                # 1. PRIMEIRO PASSO: APLICAR REDAÇÕES (APAGAR O VELHO)
+                # Precisamos fazer isso antes de escrever o novo para não apagar o novo por acidente
                 for obj in page_mod['objects']:
-                    x = obj['left']
-                    y = obj['top'] + obj['fontSize'] # Ajuste de Baseline do PyMuPDF
-                    text = obj['text']
-                    size = obj['fontSize']
-                    
-                    # Definição de cor (Simplificada para Preto/Azul)
-                    color = (0, 0, 0)
-                    if obj.get('isSignature'):
-                        color = (0, 0, 1)
-
-                    # A MÁGICA DO WHITEOUT:
-                    # Se NÃO for um texto novo (isNew=False), significa que estamos editando algo existente.
-                    # Precisamos "apagar" o original desenhando um retângulo branco em cima.
                     if not obj.get('isNew', False):
-                        # Criamos um retângulo ligeiramente maior que o texto para garantir a cobertura
-                        rect = fitz.Rect(obj['left'], obj['top'], obj['left'] + obj['width'] + 2, obj['top'] + obj['height'] + 2)
-                        page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
+                        # Pega as dimensões da área ORIGINAL que deve ser apagada
+                        # O Frontend deve enviar 'eraseWidth' e 'eraseHeight' baseados no original
+                        e_width = obj.get('eraseWidth', obj['width'])
+                        e_height = obj.get('eraseHeight', obj['height'])
+                        
+                        # Define a área de corte (Redaction)
+                        rect = fitz.Rect(obj['left'], obj['top'], obj['left'] + e_width + 1, obj['top'] + e_height + 1)
+                        
+                        # Define a cor de preenchimento (Fundo do papel)
+                        bg_color_hex = obj.get('backgroundColor', '#ffffff')
+                        fill_color = hex_to_rgb(bg_color_hex)
+                        
+                        # Se for transparente no front, a gente tenta usar branco ou a cor detectada para tapar o buraco
+                        # Redação precisa de cor de fill, senão fica preto ou vazio
+                        if fill_color is None: 
+                            fill_color = (1, 1, 1) # Fallback Branco se mandou transparente, pois tem que tapar o buraco
+                        
+                        # Adiciona a anotação de redação
+                        page.add_redact_annot(rect, fill=fill_color)
+                
+                # Aplica o corte (Remove vetores e imagens na área marcada)
+                page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE) # Tenta preservar imagens de fundo que não tocam o texto
 
-                    # Insere o novo texto
+                # 2. SEGUNDO PASSO: ESCREVER O NOVO TEXTO
+                for obj in page_mod['objects']:
+                    # Configurações de Fonte
+                    font_mapper = {"Times New Roman": "tiro", "Courier New": "cour", "Arial": "helv"}
+                    font_code = font_mapper.get(obj.get('fontFamily'), "helv")
+                    if obj.get('fontWeight') == 'bold' and font_code == 'helv': font_code = 'helv-bo'
+                    
+                    color = (0, 0, 1) if obj.get('isSignature') else (0, 0, 0)
+                    
                     page.insert_text(
-                        (x, y),
-                        text,
-                        fontsize=size,
+                        (obj['left'], obj['top'] + obj['fontSize']), # PyMuPDF usa baseline
+                        obj['text'],
+                        fontsize=obj['fontSize'],
                         color=color,
-                        fontname="helv", # Usa Helvetica como padrão seguro
+                        fontname=font_code 
                     )
 
         output_buffer = io.BytesIO()
         doc.save(output_buffer)
         output_buffer.seek(0)
-        
-        return StreamingResponse(
-            output_buffer, 
-            media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename=edited_{file.filename}"}
-        )
+        return StreamingResponse(output_buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=edited_{file.filename}"})
 
     except Exception as e:
-        print(f"Erro ao salvar: {e}")
         raise HTTPException(status_code=500, detail=str(e))
