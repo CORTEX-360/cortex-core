@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CORTEX 360 | Editor Full Text</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';</script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+    
+    <style>
+        .canvas-container { margin: 0 auto 20px auto; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); }
+        /* Loader estilo CORTEX */
+        .spinner { border: 4px solid rgba(255, 255, 255, 0.1); width: 40px; height: 40px; border-radius: 50%; border-left-color: #10b981; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-200 font-sans antialiased overflow-y-scroll">
+
+    <nav class="sticky top-0 z-50 border-b border-slate-700 bg-slate-800/90 backdrop-blur p-4">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold text-emerald-400 tracking-wider">CORTEX<span class="text-white">360</span> <span class="text-xs text-slate-400 font-normal">| Full Editor</span></h1>
+            
+            <div id="toolbar" class="hidden flex space-x-2 items-center">
+                <span class="text-xs text-slate-500 mr-2">Ferramentas:</span>
+                <button onclick="addNewText()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1 rounded text-sm border border-slate-600 transition-colors">
+                    + Texto
+                </button>
+                <button onclick="addSignature()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-sm shadow-lg shadow-emerald-500/20 transition-colors">
+                    Assinar
+                </button>
+                <div class="h-6 w-px bg-slate-600 mx-2"></div>
+                <button onclick="savePDF()" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-1 rounded text-sm font-bold shadow-lg shadow-blue-500/20 transition-colors">
+                    Salvar & Baixar
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mx-auto p-6 flex flex-col items-center">
+        
+        <div class="w-full max-w-2xl bg-slate-800 rounded-lg p-12 border border-slate-700 text-center mt-10 transition-all shadow-2xl" id="upload-box">
+            <div class="mb-4 text-emerald-500">
+                <svg class="mx-auto h-16 w-16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+            </div>
+            <h3 class="text-2xl font-medium text-white mb-2">Editor com Reconhecimento de Campos</h3>
+            <p class="text-slate-400 mb-8">Nós identificamos o texto para você editar.</p>
+            <input type="file" id="file-input" accept="application/pdf" class="hidden" onchange="handleFileUpload(this)">
+            <button onclick="document.getElementById('file-input').click()" class="bg-emerald-500 hover:bg-emerald-400 text-white font-bold py-3 px-8 rounded-full transition-all shadow-xl shadow-emerald-500/20 transform hover:-translate-y-1">
+                Carregar PDF
+            </button>
+        </div>
+
+        <div id="loading" class="hidden flex flex-col items-center mt-20">
+            <div class="spinner mb-4"></div>
+            <p class="text-emerald-400 animate-pulse font-mono">A Inteligência Artificial está mapeando os textos...</p>
+        </div>
+
+        <div id="viewer-container" class="w-full max-w-5xl hidden flex flex-col gap-8 mt-4"></div>
+
+        <div id="status-bar" class="fixed bottom-0 left-0 right-0 bg-slate-900/90 border-t border-slate-700 text-xs text-emerald-400 p-2 font-mono text-center hidden">
+            Sistema Pronto.
+        </div>
+    </div>
+
+    <script>
+        const API_URL = "https://cortex360.com.br:8082"; 
+        
+        let pdfDoc = null;
+        let fabricCanvases = [];
+        let pdfData = null; // Armazena as posições dos textos vindas do Python
+
+        async function handleFileUpload(input) {
+            const file = input.files[0];
+            if (!file) return;
+
+            // UI Changes
+            document.getElementById('upload-box').classList.add('hidden');
+            document.getElementById('loading').classList.remove('hidden');
+
+            try {
+                // 1. Envia para o Python analisar ONDE estão os textos
+                showStatus("Analisando estrutura do arquivo...");
+                const formData = new FormData();
+                formData.append("file", file);
+                
+                const response = await fetch(`${API_URL}/analyze`, { method: 'POST', body: formData });
+                if (!response.ok) throw new Error("Erro na análise da API");
+                pdfData = await response.json();
+
+                // 2. Carrega visualmente o PDF
+                showStatus("Renderizando páginas...");
+                const fileURL = URL.createObjectURL(file);
+                pdfDoc = await pdfjsLib.getDocument(fileURL).promise;
+                
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('viewer-container').classList.remove('hidden');
+                document.getElementById('toolbar').classList.remove('hidden');
+                document.getElementById('status-bar').classList.remove('hidden');
+
+                await renderEditablePages();
+                showStatus("Pronto para edição. Clique em qualquer texto para alterar.");
+
+            } catch (e) {
+                console.error(e);
+                alert("Erro: " + e.message);
+                location.reload();
+            }
+        }
+
+        async function renderEditablePages() {
+            const container = document.getElementById('viewer-container');
+            container.innerHTML = '';
+            fabricCanvases = [];
+
+            for (let i = 1; i <= pdfDoc.numPages; i++) {
+                const page = await pdfDoc.getPage(i);
+                
+                // Usamos scale 1.5 para boa resolução visual (High DPI)
+                const scale = 1.5; 
+                const viewport = page.getViewport({ scale: scale });
+
+                // Cria elemento Canvas HTML
+                const canvasEl = document.createElement('canvas');
+                canvasEl.id = `page-${i}`;
+                canvasEl.width = viewport.width;
+                canvasEl.height = viewport.height;
+                container.appendChild(canvasEl);
+
+                // Renderiza o PDF como imagem de fundo no Canvas
+                const renderContext = { canvasContext: canvasEl.getContext('2d'), viewport: viewport };
+                await page.render(renderContext).promise;
+
+                // Transforma em FabricJS (Camada Interativa)
+                const bgImage = canvasEl.toDataURL("image/png");
+                const fabricObj = new fabric.Canvas(`page-${i}`, {
+                    width: viewport.width,
+                    height: viewport.height,
+                    selection: true
+                });
+
+                fabric.Image.fromURL(bgImage, function(img) {
+                    img.set({ width: viewport.width, height: viewport.height, originX: 'left', originY: 'top', selectable: false });
+                    fabricObj.setBackgroundImage(img, fabricObj.renderAll.bind(fabricObj));
+                });
+
+                // --- A MÁGICA: CRIA CAIXAS DE TEXTO SOBRE O PDF ---
+                // Pega os dados da página correspondente (índice i-1)
+                const pageData = pdfData.pages[i-1];
+                if (pageData && pageData.text_objects) {
+                    pageData.text_objects.forEach(obj => {
+                        // Converte coordenadas do Python (Scale 1.0) para o Canvas (Scale 1.5)
+                        const textObj = new fabric.IText(obj.text, {
+                            left: obj.x * scale,
+                            top: obj.y * scale,
+                            fontSize: obj.size * scale,
+                            fontFamily: 'Helvetica', 
+                            fill: '#000000', 
+                            backgroundColor: 'transparent', // Começa transparente (vê o original)
+                            opacity: 0.01, // Truque: Quase invisível para não poluir, mas clicável
+                            editable: true,
+                            cursorColor: 'blue'
+                        });
+
+                        // Propriedades customizadas para controle
+                        textObj.set('origText', obj.text);
+                        textObj.set('origWidth', obj.width * scale);
+                        textObj.set('origHeight', obj.height * scale);
+
+                        // EVENTO: Quando o usuário clica para editar
+                        textObj.on('selected', function() {
+                            this.set('opacity', 1); // Fica 100% visível
+                            this.set('backgroundColor', '#ffffff'); // Fundo branco sólido para cobrir o original
+                            fabricObj.renderAll();
+                        });
+
+                        // EVENTO: Quando desseleciona (clica fora)
+                        textObj.on('deselected', function() {
+                            // Se o texto mudou, mantém visível (editado). Se não mudou, volta a ser transparente.
+                            if (this.text !== this.origText) {
+                                this.set('opacity', 1);
+                                this.set('backgroundColor', '#ffffff');
+                            } else {
+                                this.set('opacity', 0.01);
+                                this.set('backgroundColor', 'transparent');
+                            }
+                            fabricObj.renderAll();
+                        });
+
+                        fabricObj.add(textObj);
+                    });
+                }
+
+                fabricCanvases.push(fabricObj);
+            }
+        }
+
+        // --- FERRAMENTAS ---
+
+        function addNewText() {
+            const canvas = fabricCanvases[0]; // Adiciona na pág 1 por padrão
+            const text = new fabric.IText('Novo Texto', {
+                left: 50, top: 50, fontSize: 20, fill: 'black', backgroundColor: 'white'
+            });
+            text.set('isNew', true); // Marca para o backend saber que não precisa de whiteout
+            canvas.add(text);
+            canvas.setActiveObject(text);
+        }
+
+        function addSignature() {
+            const canvas = fabricCanvases[0];
+            const text = new fabric.Text('Heraldo Silva', {
+                left: 100, top: 200, fontFamily: 'Times New Roman', 
+                fill: 'blue', fontSize: 28, fontStyle: 'italic',
+                backgroundColor: 'transparent'
+            });
+            text.set('isSignature', true);
+            text.set('isNew', true);
+            canvas.add(text);
+            canvas.setActiveObject(text);
+        }
+
+        async function savePDF() {
+            const originalFileInput = document.getElementById('file-input');
+            const modifications = [];
+
+            fabricCanvases.forEach((canvas, index) => {
+                const objects = canvas.getObjects();
+                const pageMods = [];
+                
+                objects.forEach(obj => {
+                    // Só salvamos se for um objeto de texto
+                    if (obj.type === 'i-text' || obj.type === 'text') {
+                        
+                        // Verifica se o texto mudou ou se é novo/assinatura
+                        // Salvamos apenas o que foi alterado ou adicionado
+                        if (obj.opacity > 0.1 || obj.isNew) { 
+                            // Scale Down para o tamanho original do PDF (divide por 1.5)
+                            const scaleFactor = 1.5;
+                            
+                            pageMods.push({
+                                text: obj.text,
+                                left: obj.left / scaleFactor,
+                                top: obj.top / scaleFactor,
+                                width: (obj.width * obj.scaleX) / scaleFactor, // Para saber o tamanho do whiteout
+                                height: (obj.height * obj.scaleY) / scaleFactor,
+                                fontSize: (obj.fontSize * obj.scaleY) / scaleFactor,
+                                isNew: obj.isNew || false,
+                                isSignature: obj.isSignature || false
+                            });
+                        }
+                    }
+                });
+
+                if (pageMods.length > 0) {
+                    modifications.push({ pageIndex: index, objects: pageMods });
+                }
+            });
+
+            if (modifications.length === 0) {
+                alert("Nenhuma alteração detectada para salvar.");
+                return;
+            }
+
+            // Envia para API
+            showStatus("Processando alterações e gerando novo PDF...");
+            const formData = new FormData();
+            formData.append("file", originalFileInput.files[0]);
+            formData.append("modifications", JSON.stringify(modifications));
+
+            try {
+                const response = await fetch(`${API_URL}/sign`, { method: 'POST', body: formData });
+                if (!response.ok) throw new Error("Erro ao salvar no servidor.");
+                
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `Cortex_Editado_${Date.now()}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                showStatus("Download concluído com sucesso!");
+            } catch (e) {
+                console.error(e);
+                showStatus("Erro: " + e.message);
+                alert("Erro ao salvar PDF. Veja o console.");
+            }
+        }
+
+        function showStatus(msg) {
+            const bar = document.getElementById('status-bar');
+            bar.textContent = `> ${msg}`;
+            bar.classList.remove('hidden');
+        }
+    </script>
+</body>
+</html>

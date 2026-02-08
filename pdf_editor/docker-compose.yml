@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  cortex-pdf-api:
+    build: .
+    container_name: cortex_pdf_engine
+    ports:
+      - "8082:8000"
+    volumes:
+      - ./app:/code/app
+      - ./certs:/code/certs  # <--- NOVA LINHA: Injeta os certificados
+    restart: always
+    mem_limit: 512m
+    # ABAIXO: Comando atualizado para ativar SSL no Uvicorn
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --ssl-keyfile /code/certs/privkey.pem --ssl-certfile /code/certs/fullchain.pem

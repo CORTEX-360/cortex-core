@@ -1,0 +1,7 @@
+.user.ini
+.htaccess
+*.log
+.venv/
+uploads/
+cortex360.com.br.tar.gz
+.well-known/

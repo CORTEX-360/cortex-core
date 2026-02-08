@@ -1,0 +1,137 @@
+:root {
+    --bg-color: #0F172A;
+    --text-main: #F8FAFC;
+    --text-secondary: #94A3B8;
+    --accent-cyan: #22D3EE;
+    --card-glass: rgba(30, 41, 59, 0.6);
+    --border-ui: rgba(148, 163, 184, 0.1);
+    --grid-color: rgba(34, 211, 238, 0.05);
+    --glow-opacity: 0.15;
+    --btn-text: #0F172A;
+
+    /* VARIÁVEIS PARA AS TAGS */
+    --tag-bg: rgba(30, 41, 59, 0.5);
+    --tag-text: #F8FAFC;
+    --tag-border: rgba(255, 255, 255, 0.05);
+}
+
+/* CRÍTICO: Define o comportamento de scroll globalmente no HTML.
+   Isso permite que o navegador gerencie a suavidade nativamente.
+*/
+html {
+    scroll-behavior: smooth;
+}
+
+/* --- TEMA CLARO (LIGHT MODE) --- */
+body.light-mode {
+    --bg-color: #F8FAFC;
+    --text-main: #0F172A;
+    --text-secondary: #475569;
+    --accent-cyan: #0891B2;
+    --card-glass: rgba(255, 255, 255, 0.8);
+    --border-ui: rgba(15, 23, 42, 0.1);
+    --grid-color: rgba(8, 145, 178, 0.08);
+    --glow-opacity: 0.1;
+    --btn-text: #F8FAFC;
+
+    /* Override de Tags para Alto Contraste */
+    --tag-bg: #E2E8F0;
+    --tag-text: #0F172A;
+    --tag-border: #CBD5E1;
+}
+
+/* --- ESTILOS GERAIS DO CORPO --- */
+body {
+    background-color: var(--bg-color);
+    color: var(--text-main);
+    font-family: 'Inter', sans-serif;
+    background-image: 
+        linear-gradient(var(--grid-color) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+    background-size: 50px 50px;
+    transition: background-color 0.4s ease, color 0.4s ease;
+}
+
+/* --- CLASSES UTILITÁRIAS E COMPONENTES --- */
+
+/* Tags de Tecnologia (Badges) */
+.tech-tag {
+    background-color: var(--tag-bg);
+    color: var(--tag-text);
+    border: 1px solid var(--tag-border);
+    transition: all 0.3s ease;
+}
+
+/* Fontes Personalizadas */
+.title-font { font-family: 'Outfit', sans-serif; }
+.mono { font-family: 'JetBrains Mono', monospace; }
+
+/* Efeito de Vidro (Glassmorphism) */
+.glass {
+    background: var(--card-glass);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border-ui);
+    transition: background 0.4s ease, border 0.4s ease;
+}
+
+/* Hover com Brilho */
+.glow-hover:hover {
+    box-shadow: 0 0 30px rgba(34, 211, 238, 0.2);
+    border-color: var(--accent-cyan);
+}
+
+/* Texto Gradiente */
+.gradient-text {
+    background: linear-gradient(90deg, var(--accent-cyan), #818CF8);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* Background Glows (Parallax) */
+.bg-glow {
+    position: absolute;
+    width: 500px;
+    height: 500px;
+    background: radial-gradient(circle, var(--accent-cyan) 0%, transparent 70%);
+    border-radius: 50%;
+    filter: blur(60px);
+    z-index: -1;
+    opacity: var(--glow-opacity);
+    pointer-events: none;
+    transition: transform 0.2s ease-out;
+}
+
+/* Ajuste específico para botão primário no modo claro */
+body.light-mode .btn-primary {
+    color: #FFFFFF;
+}
+
+/* 1) Evita overflow lateral causado por elementos absolutos/blur/translate */
+html, body {
+  width: 100%;
+  overflow-x: hidden;   /* fallback universal */
+}
+
+/* Navegadores modernos: mais “correto” que hidden (não cria scroll area) */
+@supports (overflow-x: clip) {
+  html, body { overflow-x: clip; }
+}
+
+/* 2) Glows não podem gerar área rolável */
+.bg-glow {
+  max-width: 100vw;
+  max-height: 100vh;
+  overflow: hidden;
+  contain: paint; /* impede o blur de expandir layout/scroll area */
+}
+
+/* 3) Segurança: mídia nunca estoura a tela */
+img, svg, video, canvas {
+  max-width: 100%;
+  height: auto;
+}
+
+/* 4) Box sizing consistente evita 1~2px de estouro */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
